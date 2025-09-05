@@ -19,7 +19,7 @@ const io = new Server(server, {
 // On applique aussi la restriction CORS pour les requêtes HTTP (pour l'admin panel)
 app.use(cors({ origin: "https://teamcrouton.com" })); // REMPLACEZ PAR L'URL DE VOTRE FRONTEND
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 4000;
 
 let state = {
   compteurs: { 'on va dire': 0, 'notamment': 0 },
