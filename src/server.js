@@ -115,4 +115,4 @@ app.use('/admin', basicAuth({ users: { 'admin': 'supersecret' }, challenge: true
 app.get('/admin/logs', (req, res) => res.json({ message: "TODO: Renvoyer les logs de la BDD" }));
 
 // On lance le serveur HTTP (qui héberge aussi le serveur WebSocket)
-server.listen(PORT, () => console.log(`🚀 Le serveur (HTTP + WS) du Compteur MIAGE écoute sur le port ${PORT}`));
+server.listen(PORT, '127.0.0.1', () => console.log(`🚀 Le serveur (HTTP + WS) du Compteur MIAGE écoute sur le port ${PORT} (IPv4)`));
