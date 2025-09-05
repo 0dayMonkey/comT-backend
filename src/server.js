@@ -11,13 +11,13 @@ const server = http.createServer(app);
 // --- MODIFICATION ICI : Spécifier l'URL du frontend ---
 const io = new Server(server, {
   cors: {
-    origin: "https://teamcrouton.com/com", // REMPLACEZ PAR L'URL DE VOTRE FRONTEND
+    origin: "https://teamcrouton.com", // REMPLACEZ PAR L'URL DE VOTRE FRONTEND
     methods: ["GET", "POST"]
   }
 });
 
 // On applique aussi la restriction CORS pour les requêtes HTTP (pour l'admin panel)
-app.use(cors({ origin: "https://teamcrouton.com/com" })); // REMPLACEZ PAR L'URL DE VOTRE FRONTEND
+app.use(cors({ origin: "https://teamcrouton.com" })); // REMPLACEZ PAR L'URL DE VOTRE FRONTEND
 
 const PORT = process.env.PORT || 3000;
 
