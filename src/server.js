@@ -1,40 +1,33 @@
 const express = require('express');
 const http = require('http');
-const { Server } = require('socket.io');
-const cors = require('cors');
+const { WebSocketServer } = require('ws'); // On importe depuis 'ws'
 const cron = require('node-cron');
 const basicAuth = require('express-basic-auth');
 
 const app = express();
 const server = http.createServer(app);
 
-// --- MODIFICATION ICI : Spécifier l'URL du frontend ---
-const io = new Server(server, {
-  cors: {
-    origin: "https://teamcrouton.com", // REMPLACEZ PAR L'URL DE VOTRE FRONTEND
-    methods: ["GET", "POST"]
-  }
-});
-
-// On applique aussi la restriction CORS pour les requêtes HTTP (pour l'admin panel)
-app.use(cors({ origin: "https://teamcrouton.com" })); // REMPLACEZ PAR L'URL DE VOTRE FRONTEND
+// On crée le serveur WebSocket et on lui dit d'utiliser le même serveur HTTP/S
+// Le `path` est crucial pour qu'il ne réponde que sur /com/
+const wss = new WebSocketServer({ server, path: '/com/' });
 
 const PORT = process.env.PORT || 4000;
 
+// L'état de l'application reste le même
 let state = {
   compteurs: { 'on va dire': 0, 'notamment': 0 },
   lastScorer: { pseudo: null, phrase: null },
-  pseudos: {},
   isLiveMode: true,
 };
 
 const phraseLocks = { 'on va dire': false, 'notamment': false };
 const rateLimiter = new Map();
 
+// --- Logique Cron (inchangée) ---
 cron.schedule('55-59 * * * *', () => {
   console.log('[CRON] Passage en mode Scoreboard.');
   state.isLiveMode = false;
-  io.emit('updateState', state);
+  broadcastState(); // On diffuse le nouvel état
 });
 
 cron.schedule('0 * * * *', () => {
@@ -42,49 +35,84 @@ cron.schedule('0 * * * *', () => {
   state.compteurs = { 'on va dire': 0, 'notamment': 0 };
   state.lastScorer = { pseudo: null, phrase: null };
   state.isLiveMode = true;
-  io.emit('updateState', state);
+  broadcastState(); // On diffuse le nouvel état
 });
 
-io.on('connection', (socket) => {
-  console.log(`Un utilisateur s'est connecté: ${socket.id}`);
-  socket.emit('updateState', state);
+// --- Helper pour diffuser l'état à tous les clients connectés ---
+function broadcastState() {
+  // Avec 'ws', on doit créer notre propre logique de diffusion
+  const message = JSON.stringify({ type: 'updateState', payload: state });
+  wss.clients.forEach(client => {
+    // On vérifie que le client est bien prêt à recevoir des messages
+    if (client.readyState === client.OPEN) {
+      client.send(message);
+    }
+  });
+}
 
-  socket.on('setPseudo', (pseudo) => {
-    state.pseudos[socket.id] = pseudo.substring(0, 15);
-    console.log(`L'utilisateur ${socket.id} a choisi le pseudo: ${pseudo}`);
+// --- Gestion des connexions WebSocket ---
+wss.on('connection', (ws, req) => {
+  // `ws` représente la connexion d'un client unique
+  const clientId = req.headers['sec-websocket-key']; // Un identifiant unique pour la connexion
+  console.log(`Un utilisateur s'est connecté: ${clientId}`);
+
+  // 1. Envoyer l'état actuel au nouveau client
+  ws.send(JSON.stringify({ type: 'updateState', payload: state }));
+
+  // 2. Écouter les messages entrants de ce client
+  ws.on('message', (message) => {
+    try {
+      const data = JSON.parse(message);
+      const pseudo = ws.pseudo || 'Anonyme'; // Le pseudo est stocké sur l'objet de connexion
+
+      // On utilise un `switch` pour gérer les différents types de messages
+      switch (data.type) {
+        case 'setPseudo':
+          ws.pseudo = data.payload.substring(0, 15);
+          break;
+
+        case 'incrementCounter':
+          const { phrase } = data.payload;
+
+          if (!state.isLiveMode) return;
+          
+          // Logique de Rate Limiting (adaptée)
+          const now = Date.now();
+          const userTimestamps = rateLimiter.get(clientId) || [];
+          const recentTimestamps = userTimestamps.filter(ts => now - ts < 10000);
+          if (recentTimestamps.length >= 5) return;
+          rateLimiter.set(clientId, [...recentTimestamps, now]);
+
+          // Logique de "Buzz" (inchangée)
+          if (phraseLocks[phrase]) return;
+          phraseLocks[phrase] = true;
+
+          state.compteurs[phrase]++;
+          state.lastScorer = { pseudo, phrase };
+          
+          broadcastState(); // On diffuse le nouvel état à tout le monde
+
+          setTimeout(() => { phraseLocks[phrase] = false; }, 2500);
+          break;
+      }
+    } catch (error) {
+      console.error('Erreur de message WebSocket:', error);
+    }
   });
 
-  socket.on('incrementCounter', (data) => {
-    const { phrase } = data;
-    const pseudo = state.pseudos[socket.id] || 'Anonyme';
-    
-    if (!state.isLiveMode) return;
-
-    const now = Date.now();
-    const userTimestamps = rateLimiter.get(socket.id) || [];
-    const recentTimestamps = userTimestamps.filter(ts => now - ts < 10000);
-    if (recentTimestamps.length >= 5) return;
-    rateLimiter.set(socket.id, [...recentTimestamps, now]);
-
-    if (phraseLocks[phrase]) return;
-
-    phraseLocks[phrase] = true;
-    state.compteurs[phrase]++;
-    state.lastScorer = { pseudo, phrase };
-    
-    io.emit('updateState', state);
-
-    setTimeout(() => { phraseLocks[phrase] = false; }, 2500);
+  // 3. Gérer la déconnexion
+  ws.on('close', () => {
+    console.log(`L'utilisateur s'est déconnecté: ${clientId}`);
+    rateLimiter.delete(clientId); // Nettoyer le rate limiter
   });
-
-  socket.on('disconnect', () => {
-    console.log(`L'utilisateur s'est déconnecté: ${socket.id}`);
-    delete state.pseudos[socket.id];
-  });
+  
+  ws.on('error', console.error);
 });
 
+
+// --- Routes Admin Express (inchangées) ---
 app.use('/admin', basicAuth({ users: { 'admin': 'supersecret' }, challenge: true }));
 app.get('/admin/logs', (req, res) => res.json({ message: "TODO: Renvoyer les logs de la BDD" }));
-app.delete('/admin/logs/:id', (req, res) => res.json({ success: true, message: `Log ${req.params.id} supprimé.` }));
 
-server.listen(PORT, () => console.log(`🚀 Le serveur écoute sur le port ${PORT}`));
+// On lance le serveur HTTP (qui héberge aussi le serveur WebSocket)
+server.listen(PORT, () => console.log(`🚀 Le serveur (HTTP + WS) du Compteur MIAGE écoute sur le port ${PORT}`));
