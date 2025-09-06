@@ -8,11 +8,33 @@ const WSS_PORT = 4000; // Port pour le serveur WebSocket
 const HTTP_PORT = 4001; // Port pour le serveur Express (admin)
 
 // ==================================================================
-// SERVEUR WEBSOCKET
+// SERVEUR WEBSOCKET AVEC GESTION CORS
 // ==================================================================
+
+// Options WebSocket avec vérification d'origine personnalisée
 const wss = new WebSocketServer({ 
     port: WSS_PORT, 
-    host: '127.0.0.1'
+    host: '127.0.0.1',
+    // Fonction de vérification personnalisée pour ignorer les problèmes CORS
+    verifyClient: (info) => {
+        const origin = info.origin;
+        const host = info.req.headers.host;
+        
+        console.log(`[WSS] 🔍 Tentative de connexion:`);
+        console.log(`[WSS] - Origin: ${origin}`);
+        console.log(`[WSS] - Host: ${host}`);
+        console.log(`[WSS] - URL: ${info.req.url}`);
+        console.log(`[WSS] - Headers:`, JSON.stringify(info.req.headers, null, 2));
+        
+        // Accepter toutes les connexions pour résoudre le problème CORS
+        // En production, vous pourriez vouloir être plus restrictif
+        return true;
+    },
+    // Gestion personnalisée des headers
+    handleProtocols: (protocols) => {
+        console.log(`[WSS] 📋 Protocols proposés:`, protocols);
+        return protocols[0] || false;
+    }
 });
 
 let state = {
@@ -26,14 +48,14 @@ const rateLimiter = new Map();
 
 function broadcastState() {
   const message = JSON.stringify({ type: 'updateState', payload: state });
-  console.log(`[WSS] Broadcast état vers ${wss.clients.size} clients`);
+  console.log(`[WSS] 📡 Broadcast état vers ${wss.clients.size} clients`);
   
   wss.clients.forEach(client => {
     if (client.readyState === client.OPEN) {
       try {
         client.send(message);
       } catch (error) {
-        console.error('[WSS] Erreur envoi message:', error);
+        console.error('[WSS] ❌ Erreur envoi message:', error);
       }
     }
   });
@@ -42,18 +64,21 @@ function broadcastState() {
 wss.on('connection', (ws, req) => {
   const clientId = req.headers['sec-websocket-key'] || `client_${Math.random().toString(36).substring(7)}`;
   const userAgent = req.headers['user-agent'] || 'Unknown';
+  const origin = req.headers['origin'] || 'No origin';
   
-  console.log(`[WSS] 🔌 Nouvelle connexion: ${clientId}`);
-  console.log(`[WSS] User-Agent: ${userAgent}`);
-  console.log(`[WSS] URL: ${req.url}`);
-  console.log(`[WSS] Total connexions: ${wss.clients.size}`);
+  console.log(`[WSS] 🎉 CONNEXION RÉUSSIE !`);
+  console.log(`[WSS] - Client ID: ${clientId}`);
+  console.log(`[WSS] - User-Agent: ${userAgent}`);
+  console.log(`[WSS] - Origin: ${origin}`);
+  console.log(`[WSS] - URL: ${req.url}`);
+  console.log(`[WSS] - Total connexions: ${wss.clients.size}`);
   
   // Envoyer l'état immédiatement à la connexion
   try {
     ws.send(JSON.stringify({ type: 'updateState', payload: state }));
-    console.log(`[WSS] État initial envoyé à ${clientId}`);
+    console.log(`[WSS] ✅ État initial envoyé à ${clientId}`);
   } catch (error) {
-    console.error(`[WSS] Erreur envoi état initial à ${clientId}:`, error);
+    console.error(`[WSS] ❌ Erreur envoi état initial à ${clientId}:`, error);
   }
 
   ws.on('message', (message) => {
@@ -124,7 +149,7 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', (code, reason) => {
-    console.log(`[WSS] 🔌 Déconnexion ${clientId}: Code ${code}, Raison: ${reason}`);
+    console.log(`[WSS] 👋 Déconnexion ${clientId}: Code ${code}, Raison: ${reason}`);
     console.log(`[WSS] Total connexions restantes: ${wss.clients.size - 1}`);
     rateLimiter.delete(clientId);
   });
@@ -166,6 +191,7 @@ wss.on('close', () => {
 
 console.log(`🚀 Le serveur WebSocket du Compteur MIAGE écoute sur 127.0.0.1:${WSS_PORT}`);
 console.log(`📊 État initial des compteurs:`, state.compteurs);
+console.log(`🔧 Configuration: CORS permissif activé`);
 
 // --- Logique Cron ---
 cron.schedule('55-59 * * * *', () => {
@@ -184,22 +210,19 @@ cron.schedule('0 * * * *', () => {
 });
 
 // ==================================================================
-// SERVEUR EXPRESS POUR L'ADMIN
+// SERVEUR EXPRESS POUR L'ADMIN (inchangé)
 // ==================================================================
 const app = express();
 
-// Middleware de base
 app.use(express.json());
-app.use(express.static('public')); // Si vous avez des fichiers statiques
+app.use(express.static('public'));
 
-// Protection basique pour l'admin
 app.use('/admin', basicAuth({ 
   users: { 'admin': 'supersecret' }, 
   challenge: true,
   realm: 'Compteur MIAGE Admin'
 }));
 
-// Routes admin
 app.get('/admin', (req, res) => {
   res.json({
     message: "Interface d'administration du Compteur MIAGE",
@@ -241,13 +264,11 @@ app.get('/admin/logs', (req, res) => {
   });
 });
 
-// Gestion des erreurs Express
 app.use((error, req, res, next) => {
   console.error('[EXPRESS] ❌ Erreur:', error);
   res.status(500).json({ error: 'Erreur serveur interne' });
 });
 
-// Démarrage du serveur Express
 const server = app.listen(HTTP_PORT, '127.0.0.1', () => {
   console.log(`🚀 Le serveur Admin (Express) écoute sur 127.0.0.1:${HTTP_PORT}`);
   console.log(`🔐 Interface admin: https://miaou.vps.webdock.cloud/admin/`);
