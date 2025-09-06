@@ -4,7 +4,7 @@ const cron = require('node-cron');
 const basicAuth = require('express-basic-auth');
 
 // --- DÉFINITION DES PORTS ---
-const WSS_PORT = 4000; // Port pour le serveur WebSocket
+const WSS_PORT = 8080; // Port pour le serveur WebSocket
 const HTTP_PORT = 4001; // Port pour le serveur Express (admin)
 
 // ==================================================================
